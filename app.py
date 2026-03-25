@@ -8,7 +8,7 @@ from io import BytesIO
 # --- 1. SETUP & THEME ---
 st.set_page_config(page_title="Resume Signal Optimizer", layout="wide")
 
-# This part connects to your Google Key
+# Connect to Google Gemini
 if "GOOGLE_API_KEY" in st.secrets:
     try:
         genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
@@ -17,49 +17,54 @@ if "GOOGLE_API_KEY" in st.secrets:
 else:
     st.error("Missing Secret: Please add GOOGLE_API_KEY to your Streamlit Secrets.")
 
-# --- 2. THE AI BRAIN ---
+# --- 2. THE AI BRAIN (Updated for 2024 Models) ---
 def get_ai_rewrite(resume_text, jd_text):
-    try:
-        # We try the newest model first
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        
-        prompt = f"""
-        You are an elite Career Coach. Optimize this resume for the provided Job Description (JD).
-        
-        TONE: Humble but Confident. No 'visionary' or 'rockstar' talk. Use ownership verbs.
-        STRATEGY: 
-        1. Identify 8 high-signal keywords from the JD.
-        2. Rewrite the resume to show 'Staff-level' impact (flywheels, strategy, cross-functional).
-        3. Insert [ACTION: ...] for missing metrics and [QUERY: ...] for fact-checks.
-        
-        RESUME: {resume_text}
-        JD: {jd_text}
-        
-        IMPORTANT: Start your response with 'KEYWORDS:' followed by the list. 
-        Then write 'DRAFT:' followed by the full rewritten resume.
-        """
-        
-        response = model.generate_content(prompt)
-        return response.text
+    # We will try the two most common stable model names
+    models_to_try = ['gemini-1.5-flash', 'gemini-1.5-pro']
+    
+    prompt = f"""
+    You are an elite Career Coach. Optimize this resume for the provided Job Description (JD).
+    
+    TONE: Humble but Confident. No 'visionary' or 'rockstar' talk. Use ownership verbs.
+    STRATEGY: 
+    1. Identify 8 high-signal keywords from the JD.
+    2. Rewrite the resume to show 'Staff-level' impact (flywheels, strategy, cross-functional).
+    3. Insert [ACTION: ...] for missing metrics and [QUERY: ...] for fact-checks.
+    
+    RESUME: {resume_text}
+    JD: {jd_text}
+    
+    IMPORTANT: Start your response with 'KEYWORDS:' followed by the list. 
+    Then write 'DRAFT:' followed by the full rewritten resume.
+    """
 
-    except Exception as e:
-        # If the first model fails, try the older 'gemini-pro' model
+    success = False
+    for model_name in models_to_try:
         try:
-            model_alt = genai.GenerativeModel('gemini-pro')
-            response = model_alt.generate_content(prompt)
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
             return response.text
-        except Exception as e2:
-            st.error(f"Google AI Error: {str(e2)}")
-            return None
+            success = True
+            break
+        except Exception:
+            continue # Try the next model if this one fails
+            
+    if not success:
+        st.error("Google AI Error: Could not find a working model. Please check the sidebar for 'Available Models'.")
+        return None
 
 # --- 3. HELPER TOOLS ---
 def extract_pdf_text(file):
-    with pdfplumber.open(file) as pdf:
-        return "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
+    try:
+        with pdfplumber.open(file) as pdf:
+            return "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
+    except Exception as e:
+        st.error(f"PDF Error: {str(e)}")
+        return ""
 
 def create_docx(text):
     doc = Document()
-    # Remove the AI tags [ACTION] for the final document
+    # Remove AI tags for final doc
     clean_text = re.sub(r'\[(?:ACTION|QUERY): .*?\]', '', text) 
     for para in clean_text.split('\n'):
         if para.strip():
@@ -69,11 +74,9 @@ def create_docx(text):
     bio.seek(0)
     return bio
 
-# --- 4. THE UI (Always renders) ---
+# --- 4. THE UI ---
 st.title("🚀 Beta: Resume Signal Optimizer")
-st.write("Target: Staff-level Marketplace Roles")
 
-# Sidebar for Inputs
 with st.sidebar:
     st.header("Upload Inputs")
     uploaded_file = st.file_uploader("Upload Resume (PDF)", type="pdf")
@@ -81,27 +84,35 @@ with st.sidebar:
     
     if st.button("Generate Beta Draft", use_container_width=True):
         if uploaded_file and jd_input:
-            with st.spinner("Analyzing signals..."):
+            with st.spinner("Analyzing signals with Gemini 1.5..."):
                 resume_text = extract_pdf_text(uploaded_file)
                 output = get_ai_rewrite(resume_text, jd_input)
                 
                 if output:
-                    # Split AI response into Keywords and Resume
                     if "DRAFT:" in output:
                         parts = output.split("DRAFT:")
                         st.session_state['keywords'] = parts[0].replace("KEYWORDS:", "").strip().split(", ")
                         st.session_state['draft'] = parts[1].strip()
                         st.session_state['actions'] = re.findall(r'\[(?:ACTION|QUERY): (.*?)\]', st.session_state['draft'])
                     else:
-                        st.error("AI returned a format I didn't expect. Please try clicking the button again.")
+                        st.warning("The AI output format was unexpected. Try clicking the button again.")
         else:
             st.warning("Please upload a PDF and paste a JD first.")
 
-# Main Screen Interaction
-if 'draft' in st.session_state:
-    col_signals, col_editor, col_audit = st.columns([1, 2, 1], gap="medium")
+    st.divider()
+    # Diagnostic Tool: Helps us find the right model name if it fails again
+    if st.checkbox("Check Available AI Models"):
+        try:
+            models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            st.write(models)
+        except Exception as e:
+            st.write("Could not list models.")
 
-    with col_signals:
+# Main Interface
+if 'draft' in st.session_state:
+    col_sig, col_ed, col_aud = st.columns([1, 2, 1], gap="medium")
+
+    with col_sig:
         st.header("🎯 Signals")
         for kw in st.session_state['keywords']:
             if kw.lower() in st.session_state['draft'].lower():
@@ -109,15 +120,13 @@ if 'draft' in st.session_state:
             else:
                 st.info(f"⬜ {kw}")
 
-    with col_editor:
+    with col_ed:
         st.header("✍️ Editor")
-        st.caption("Instructions: Edit the text directly. Remove the [ACTION] items as you fill them in.")
         st.session_state['draft'] = st.text_area("Live Editor", value=st.session_state['draft'], height=600, label_visibility="collapsed")
 
-    with col_audit:
+    with col_aud:
         st.header("📋 To-Do")
         current_tags = re.findall(r'\[(?:ACTION|QUERY): (.*?)\]', st.session_state['draft'])
-        
         for item in st.session_state['actions']:
             if item in current_tags:
                 st.warning(f"👉 {item}")
@@ -126,10 +135,10 @@ if 'draft' in st.session_state:
         
         st.divider()
         if not current_tags:
-            st.success("All items cleared!")
+            st.success("Ready!")
             docx_file = create_docx(st.session_state['draft'])
             st.download_button("📥 Download Word Doc", data=docx_file, file_name="Optimized_Resume.docx")
         else:
             st.button("Download Locked", disabled=True)
 else:
-    st.info("👋 Hello! Upload your Resume and the Job Description in the sidebar to get started.")
+    st.info("👋 Upload your Resume and the Job Description to start.")
