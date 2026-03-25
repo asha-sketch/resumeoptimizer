@@ -3,7 +3,7 @@
 def get_ai_rewrite(resume_text, jd_text):
     try:
         # We use 'gemini-1.5-flash' - if this fails, we try 'gemini-pro'
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-pro')
         
         prompt = f"""
         You are an elite Career Coach. Optimize this resume for the provided Job Description (JD).
