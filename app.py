@@ -5,9 +5,10 @@ import re
 from docx import Document
 from io import BytesIO
 
-# --- 1. SETUP ---
+# --- 1. SETUP & THEME ---
 st.set_page_config(page_title="Resume Signal Optimizer", layout="wide")
 
+# Connect using your Google Key
 if "GOOGLE_API_KEY" in st.secrets:
     try:
         genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
@@ -16,87 +17,125 @@ if "GOOGLE_API_KEY" in st.secrets:
 else:
     st.error("Missing Secret: Please add GOOGLE_API_KEY to your Streamlit Secrets.")
 
-# --- 2. THE IMPROVED AI BRAIN ---
+# --- 2. THE AI BRAIN (Matched to your specific models) ---
 def get_ai_rewrite(resume_text, jd_text):
-    # These are the exact official names. We try 'models/' prefix first.
+    # Based on your diagnostic list, these are the best working models for you:
     models_to_try = [
+        'models/gemini-2.0-flash', 
         'models/gemini-1.5-flash', 
-        'models/gemini-1.5-pro', 
-        'models/gemini-pro',
-        'gemini-1.5-flash',
-        'gemini-pro'
+        'models/gemini-flash-latest'
     ]
     
-    prompt = f"Rewrite this resume for this JD. Tone: Humble/Confident. Resume: {resume_text} JD: {jd_text} ... [IMPORTANT: Start with KEYWORDS: then DRAFT:]"
+    prompt = f"""
+    You are an elite Career Coach. Optimize this resume for the provided Job Description (JD).
+    
+    TONE: Humble but Confident. No 'visionary' or 'rockstar' talk. Use ownership verbs.
+    STRATEGY: 
+    1. Identify 8 high-signal keywords from the JD.
+    2. Rewrite the resume to show 'Staff-level' impact (flywheels, strategy, cross-functional).
+    3. Insert [ACTION: ...] for missing metrics and [QUERY: ...] for fact-checks.
+    
+    RESUME: {resume_text}
+    JD: {jd_text}
+    
+    IMPORTANT: You MUST start your response with 'KEYWORDS:' followed by the list. 
+    Then write 'DRAFT:' followed by the full rewritten resume content.
+    """
 
-    last_error = ""
+    last_err = ""
     for model_name in models_to_try:
         try:
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
-            # If we get here, it worked!
             return response.text
         except Exception as e:
-            last_error = str(e)
+            last_err = str(e)
             continue 
             
-    # If all fail, show the specific reason why the last one failed
-    st.error(f"All models failed. Last Error: {last_error}")
-    st.info("Note: If you are in the UK/EU, you may need to use a VPN or an OpenAI key.")
+    st.error(f"Engine Error: {last_err}")
     return None
 
-# --- 3. UI & HELPERS (Keep these the same) ---
+# --- 3. HELPER TOOLS ---
 def extract_pdf_text(file):
-    with pdfplumber.open(file) as pdf:
-        return "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
+    try:
+        with pdfplumber.open(file) as pdf:
+            return "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
+    except Exception as e:
+        st.error(f"PDF Error: {str(e)}")
+        return ""
 
 def create_docx(text):
     doc = Document()
+    # Remove AI tags for final doc
     clean_text = re.sub(r'\[(?:ACTION|QUERY): .*?\]', '', text) 
     for para in clean_text.split('\n'):
-        if para.strip(): doc.add_paragraph(para)
+        if para.strip():
+            doc.add_paragraph(para)
     bio = BytesIO()
-    doc.save(bio); bio.seek(0)
+    doc.save(bio)
+    bio.seek(0)
     return bio
 
+# --- 4. THE UI ---
 st.title("🚀 Beta: Resume Signal Optimizer")
+st.write("Optimizing for Staff-level Marketplace Roles")
 
 with st.sidebar:
     st.header("Upload Inputs")
-    uploaded_file = st.file_uploader("Upload Resume", type="pdf")
-    jd_input = st.text_area("Paste JD", height=300)
+    uploaded_file = st.file_uploader("Upload Resume (PDF)", type="pdf")
+    jd_input = st.text_area("Paste Job Description", height=300)
     
-    if st.button("Generate Beta Draft"):
+    if st.button("Generate Beta Draft", use_container_width=True):
         if uploaded_file and jd_input:
-            resume_text = extract_pdf_text(uploaded_file)
-            output = get_ai_rewrite(resume_text, jd_input)
-            if output and "DRAFT:" in output:
-                parts = output.split("DRAFT:")
-                st.session_state['keywords'] = parts[0].replace("KEYWORDS:", "").strip().split(", ")
-                st.session_state['draft'] = parts[1].strip()
-                st.session_state['actions'] = re.findall(r'\[(?:ACTION|QUERY): (.*?)\]', st.session_state['draft'])
+            with st.spinner("Analyzing signals with Gemini 2.0..."):
+                resume_text = extract_pdf_text(uploaded_file)
+                output = get_ai_rewrite(resume_text, jd_input)
+                
+                if output:
+                    if "DRAFT:" in output:
+                        parts = output.split("DRAFT:")
+                        st.session_state['keywords'] = parts[0].replace("KEYWORDS:", "").strip().split(", ")
+                        st.session_state['draft'] = parts[1].strip()
+                        st.session_state['actions'] = re.findall(r'\[(?:ACTION|QUERY): (.*?)\]', st.session_state['draft'])
+                    else:
+                        st.warning("The AI output format was unexpected. Try clicking again.")
         else:
-            st.warning("Input required.")
+            st.warning("Please upload a PDF and paste a JD first.")
 
-    st.divider()
-    if st.checkbox("Check Available AI Models"):
-        try:
-            m_list = [m.name for m in genai.list_models()]
-            st.write(m_list)
-        except Exception as e:
-            st.write(f"Diagnostic failed: {str(e)}")
-
-# Main Display
+# Main Interface (Only shows after "Generate" is clicked)
 if 'draft' in st.session_state:
-    c1, c2, c3 = st.columns([1, 2, 1])
-    with c1:
+    col_sig, col_ed, col_aud = st.columns([1, 2, 1], gap="medium")
+
+    with col_sig:
+        st.header("🎯 Signals")
         for kw in st.session_state['keywords']:
-            st.write(f"{'✅' if kw.lower() in st.session_state['draft'].lower() else '⬜'} {kw}")
-    with c2:
-        st.session_state['draft'] = st.text_area("Editor", value=st.session_state['draft'], height=600)
-    with c3:
-        tags = re.findall(r'\[(?:ACTION|QUERY): (.*?)\]', st.session_state['draft'])
+            if kw.lower() in st.session_state['draft'].lower():
+                st.success(f"✅ {kw}")
+            else:
+                st.info(f"⬜ {kw}")
+
+    with col_ed:
+        st.header("✍️ Editor")
+        st.caption("Instructions: Address the [ACTION] items by typing your data directly here.")
+        st.session_state['draft'] = st.text_area("Live Editor", value=st.session_state['draft'], height=600, label_visibility="collapsed")
+
+    with col_aud:
+        st.header("📋 To-Do")
+        # Find all tags currently in the text area
+        current_tags = re.findall(r'\[(?:ACTION|QUERY): (.*?)\]', st.session_state['draft'])
+        
         for item in st.session_state['actions']:
-            st.write(f"{'✅ ~~' + item + '~~' if item not in tags else '👉 ' + item}")
-        if not tags:
-            st.download_button("📥 Download", data=create_docx(st.session_state['draft']), file_name="Resume.docx")
+            if item in current_tags:
+                st.warning(f"👉 {item}")
+            else:
+                st.write(f"✅ ~~{item}~~")
+        
+        st.divider()
+        if not current_tags:
+            st.success("Ready for export!")
+            docx_file = create_docx(st.session_state['draft'])
+            st.download_button("📥 Download Word Doc", data=docx_file, file_name="Optimized_Resume.docx")
+        else:
+            st.button("Download Locked", disabled=True)
+else:
+    st.info("👋 Upload your data in the sidebar to begin.")
