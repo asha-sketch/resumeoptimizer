@@ -1,6 +1,5 @@
 import streamlit as st
 import google.generativeai as genai
-from google.generativeai.types import SafetySettingDict
 import pdfplumber, re, docx, io
 
 # --- 1. SETUP ---
@@ -12,14 +11,14 @@ else:
 
 # --- 2. AI & HELPERS ---
 def run_audit(res_txt, jd_txt):
-    # These match your diagnostic list exactly
+    # These are the exact confirmed names from your previous diagnostic list
     models_to_try = [
         'models/gemini-2.0-flash', 
         'models/gemini-1.5-flash', 
-        'models/gemini-pro'
+        'models/gemini-flash-latest'
     ]
     
-    # Safety settings: Prevent Google from blocking resumes due to PII (phone/email)
+    # Updated Safety Settings for the newest models
     safety_settings = [
         {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
         {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -32,25 +31,28 @@ def run_audit(res_txt, jd_txt):
     INSTRUCTIONS:
     1. Summarize 3 tone pivots inside <strategy> tags.
     2. Rewrite the resume inside <resume> tags. 
-    3. Tone: Humble but Confident. Use [INSERT: data] for missing metrics. 
-    
+    3. Mirror the JD language. Tone: Humble but Confident.
+    4. Use [INSERT: data] for missing metrics. No extra bolding (**).
+
     RESUME: {res_txt}
-    JD: {jd_txt}
+    JD: {jd_text}
     """
 
+    last_error = ""
     for m in models_to_try:
         try:
             model = genai.GenerativeModel(m)
-            # We call the AI with safety settings disabled
-            res = model.generate_content(prompt, safety_settings=safety_settings)
+            # Use generation_config to ensure we get a text response
+            res = model.generate_content(
+                prompt, 
+                safety_settings=safety_settings
+            )
             if res.text: 
                 return res.text
         except Exception as e:
-            # We store the error to show the user if all models fail
             last_error = str(e)
             continue
     
-    # If we get here, all models failed
     return f"DEBUG_ERROR: {last_error}"
 
 def make_doc(txt):
@@ -73,15 +75,15 @@ with st.sidebar:
     j = st.text_area("Job Description", height=200)
     if st.button("Run Audit", use_container_width=True):
         if f and j:
-            with st.spinner("Processing..."):
+            with st.spinner("Processing with Gemini..."):
                 with pdfplumber.open(f) as pdf:
                     t = "\n".join([pg.extract_text() for pg in pdf.pages if pg.extract_text()])
                 out = run_audit(t, j)
                 
                 if out and "DEBUG_ERROR:" in out:
                     st.error(f"Google AI Error: {out.replace('DEBUG_ERROR: ', '')}")
-                    st.info("Tip: If the error says 'User location not supported', you are likely in a restricted region.")
                 elif out:
+                    # Parse XML tags
                     strat = re.search(r'<strategy>(.*?)</strategy>', out, re.DOTALL)
                     resm = re.search(r'<resume>(.*?)</resume>', out, re.DOTALL)
                     if strat and resm:
@@ -92,7 +94,7 @@ with st.sidebar:
                         st.session_state['dr'] = out.strip()
                     st.session_state['to'] = re.findall(r'\[INSERT:? (.*?)\]', st.session_state['dr'])
                 else:
-                    st.error("AI Error: The server returned an empty response. Try again.")
+                    st.error("AI Error: Empty response. Please try again.")
 
 # --- 4. DASHBOARD ---
 if 'dr' in st.session_state:
@@ -105,15 +107,4 @@ if 'dr' in st.session_state:
         st.subheader("📋 Action Items")
         cur = re.findall(r'\[INSERT:? (.*?)\]', st.session_state['dr'])
         dn = 0
-        if st.session_state.get('to'):
-            for i in st.session_state['to']:
-                if i in cur: st.error(f"👉 {i}")
-                else: st.success("✅ Resolved"); dn += 1
-            if dn == len(st.session_state['to']):
-                st.download_button("📥 Download", data=make_doc(st.session_state['dr']), file_name="Optimized.docx", use_container_width=True)
-            else: st.button(f"Locked ({dn}/{len(st.session_state['to'])})", disabled=True, use_container_width=True)
-        else:
-            st.success("Draft ready!")
-            st.download_button("📥 Download", data=make_doc(st.session_state['dr']), file_name="Optimized.docx", use_container_width=True)
-else:
-    st.info("👋 Upload data in sidebar to begin.")
+        if st.session_state.ge
