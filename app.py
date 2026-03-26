@@ -5,7 +5,7 @@ import re
 from docx import Document
 from io import BytesIO
 
-# --- 1. SETUP ---
+# --- 1. SETUP & STYLE ---
 st.set_page_config(page_title="Resume Signal Auditor", layout="wide")
 
 st.markdown("""
@@ -20,31 +20,32 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# API Key Check
 if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 else:
-    st.error("Missing API Key in Secrets.")
+    st.error("Missing API Key. Please add 'GOOGLE_API_KEY' to Streamlit Secrets.")
 
-# --- 2. THE AI BRAIN ---
+# --- 2. AI LOGIC ---
 def run_ai_audit(resume_text, jd_text):
-    # Using the models confirmed in your diagnostic list
     models_to_try = ['models/gemini-2.0-flash', 'models/gemini-1.5-flash']
     
     prompt = f"""
     You are an elite Career Coach.
     
     TASK:
-    1. Summarize 3-4 specific vocabulary/tone changes you made in the CHANGELOG section.
-    2. Rewrite the resume DRAFT to mirror the JD's language while maintaining a 'Humble but Confident' tone.
-    3. Use ONLY [INSERT: specific data needed] where a metric or fact is missing. Do not use any other brackets or symbols.
-    4. RETAIN the original resume's structure and formatting exactly. Do not add bolding (**) unless it was in the original text.
+    1. Summarize 3-4 specific tone/vocabulary pivots in the CHANGELOG section.
+    2. Rewrite the resume DRAFT to mirror the JD's language. 
+    3. Maintain a 'Humble but Confident' tone.
+    4. Use ONLY [INSERT: specific data] where a metric or fact is missing.
+    5. RETAIN the original resume's structure exactly. No extra bolding (**).
 
-    FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
+    FORMAT:
     CHANGELOG:
-    (Brief summary of tone/keyword pivots)
+    (Brief summary)
     
     DRAFT:
-    (The full, clean resume rewrite)
+    (Full rewritten resume)
 
     RESUME: {resume_text}
     JD: {jd_text}
@@ -60,15 +61,15 @@ def run_ai_audit(resume_text, jd_text):
             continue
     return None
 
-# --- 3. HELPER TOOLS ---
+# --- 3. HELPERS ---
 def create_docx(text):
     doc = Document()
-    # Remove only the [INSERT: ] tags for the final version
+    # Remove [INSERT: ...] tags for final version
     clean = re.sub(r'\[INSERT:? .*?\]', '', text, flags=re.IGNORECASE) 
     for line in clean.split('\n'):
         if line.strip():
             p = doc.add_paragraph()
-            # Bolding headers (standard detection for names/titles)
+            # Basic bolding for headers
             if "|" in line or line.isupper():
                 p.add_run(line).bold = True
             else:
@@ -78,7 +79,7 @@ def create_docx(text):
     bio.seek(0)
     return bio
 
-# --- 4. THE UI ---
+# --- 4. SIDEBAR INPUTS ---
 st.title("🎯 Resume Signal Auditor")
 
 with st.sidebar:
@@ -97,16 +98,20 @@ with st.sidebar:
                 if raw_output and "DRAFT:" in raw_output:
                     st.session_state['changelog'] = raw_output.split("DRAFT:")[0].replace("CHANGELOG:", "").strip()
                     st.session_state['draft'] = raw_output.split("DRAFT:")[1].strip()
-                    # Store the specific strings the user needs to replace
+                    # Identify items for the checklist
                     st.session_state['todo_items'] = re.findall(r'\[INSERT:? (.*?)\]', st.session_state['draft'])
                 else:
-                    st.error("Processing error. Please click 'Run Strategic Audit' again.")
+                    st.error("AI Error. Please try again.")
 
-# --- 5. THE DASHBOARD ---
+# --- 5. MAIN DASHBOARD ---
 if 'draft' in st.session_state:
     
-    # Strategy Section
+    # Changelog / Strategy
     with st.expander("🛠️ AI Strategy: What was rewritten", expanded=True):
         st.write(st.session_state['changelog'])
 
-    col_ed, col
+    # Two Column Layout
+    col_ed, col_check = st.columns([2, 1], gap="large")
+
+    with col_ed:
+        st.subheader("✍️ Draft & Ed
