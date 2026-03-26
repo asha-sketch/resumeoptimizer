@@ -25,20 +25,21 @@ if "GOOGLE_API_KEY" in st.secrets:
 else:
     st.error("Missing API Key in Secrets.")
 
-# --- 2. THE AI BRAIN (Focused on Clean Output) ---
+# --- 2. THE AI BRAIN ---
 def run_ai_audit(resume_text, jd_text):
+    # Using the models confirmed in your diagnostic list
     models_to_try = ['models/gemini-2.0-flash', 'models/gemini-1.5-flash']
     
     prompt = f"""
     You are an elite Career Coach.
     
     TASK:
-    1. Summarize 3-4 specific vocabulary/tone changes you made in the CHANGELOG.
+    1. Summarize 3-4 specific vocabulary/tone changes you made in the CHANGELOG section.
     2. Rewrite the resume DRAFT to mirror the JD's language while maintaining a 'Humble but Confident' tone.
     3. Use ONLY [INSERT: specific data needed] where a metric or fact is missing. Do not use any other brackets or symbols.
     4. RETAIN the original resume's structure and formatting exactly. Do not add bolding (**) unless it was in the original text.
 
-    FORMAT YOUR RESPONSE:
+    FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
     CHANGELOG:
     (Brief summary of tone/keyword pivots)
     
@@ -67,10 +68,14 @@ def create_docx(text):
     for line in clean.split('\n'):
         if line.strip():
             p = doc.add_paragraph()
-            # Simple bolding for headers (all caps or contains |)
-            if "|" in line or line.isupper(): p.add_run(line).bold = True
-            else: p.add_run(line)
-    bio = BytesIO(); doc.save(bio); bio.seek(0)
+            # Bolding headers (standard detection for names/titles)
+            if "|" in line or line.isupper():
+                p.add_run(line).bold = True
+            else:
+                p.add_run(line)
+    bio = BytesIO()
+    doc.save(bio)
+    bio.seek(0)
     return bio
 
 # --- 4. THE UI ---
@@ -100,34 +105,8 @@ with st.sidebar:
 # --- 5. THE DASHBOARD ---
 if 'draft' in st.session_state:
     
-    # Changelog tells them WHAT was rewritten
-    with st.expander("🛠️ Strategy: What was rewritten", expanded=True):
+    # Strategy Section
+    with st.expander("🛠️ AI Strategy: What was rewritten", expanded=True):
         st.write(st.session_state['changelog'])
 
-    col_ed, col_check = st.columns([2, 1], gap="large")
-
-    with col_ed:
-        st.subheader("✍️ Draft & Editor")
-        st.caption("Instructions: Address the [INSERT] tags below with your specific metrics.")
-        # Only the editor is shown here, no "Preview" pane
-        st.session_state['draft'] = st.text_area("Resume Content", value=st.session_state['draft'], height=650, label_visibility="collapsed")
-
-    with col_check:
-        st.subheader("📋 Action Items")
-        st.write("Fill in these missing metrics to unlock your download.")
-        
-        # Check current text area for remaining [INSERT] tags
-        current_tags_in_text = re.findall(r'\[INSERT:? (.*?)\]', st.session_state['draft'])
-        
-        resolved_count = 0
-        if 'todo_items' in st.session_state and st.session_state['todo_items']:
-            for item in st.session_state['todo_items']:
-                if item in current_tags_in_text:
-                    st.error(f"👉 {item}")
-                else:
-                    st.success(f"✅ Resolved")
-                    resolved_count += 1
-            
-            # Show progress
-            total = len(st.session_state['todo_items'])
-            if r
+    col_ed, col
