@@ -7,32 +7,46 @@ st.set_page_config(page_title="Resume Optimizer", layout="wide")
 if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 else:
-    st.error("Missing API Key")
+    st.error("Missing API Key in Streamlit Secrets")
 
-# --- 2. AI LOGIC (Clean & Simple) ---
+# --- 2. AI LOGIC (Safety Filters Disabled) ---
 def run_optimization(res_txt, jd_txt):
-    # Using your confirmed working models
-    models = ['models/gemini-2.0-flash', 'models/gemini-1.5-flash']
+    # Models from your previous diagnostic
+    models = ['models/gemini-2.0-flash', 'models/gemini-1.5-flash', 'models/gemini-flash-latest']
     
+    # This prevents Google from blocking the resume due to contact info
+    safety_settings = [
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+    ]
+
     prompt = f"""
     You are an elite Career Coach. 
-    1. Rewrite the resume inside <resume> tags. 
-    2. Use a 'Humble but Confident' tone and mirror the JD language.
-    3. Retain the original structure. No extra bolding (**).
-    4. Provide 5-7 optional 'Next Level' suggestions for the user inside <suggestions> tags. 
-       These should be specific things they could add (e.g. "Add a metric for X" or "Explain the scale of Y").
+    Rewrite the provided resume to mirror the language of the Job Description.
+    Tone: Humble but Confident. No extra bolding.
+    
+    FORMAT:
+    Put the rewritten resume inside <resume> tags.
+    Put 5 strategic suggestions inside <suggestions> tags.
 
     RESUME: {res_txt}
     JD: {jd_txt}
     """
     
+    last_err = ""
     for m in models:
         try:
             model = genai.GenerativeModel(m)
-            res = model.generate_content(prompt)
-            if res.text: return res.text
-        except: continue
-    return None
+            # Call with safety settings
+            res = model.generate_content(prompt, safety_settings=safety_settings)
+            if res.text:
+                return res.text
+        except Exception as e:
+            last_err = str(e)
+            continue
+    return f"ERROR: {last_err}"
 
 def make_doc(txt):
     d = docx.Document()
@@ -46,7 +60,6 @@ def make_doc(txt):
 
 # --- 3. UI ---
 st.title("🚀 Resume Signal Optimizer")
-st.caption("Simplified Beta: Rewrite & Strategic Suggestions")
 
 with st.sidebar:
     st.header("1. Upload Inputs")
@@ -55,15 +68,25 @@ with st.sidebar:
     
     if st.button("Optimize & Suggest", use_container_width=True):
         if f and j:
-            with st.spinner("Analyzing signals..."):
+            with st.spinner("Gemini is thinking..."):
                 with pdfplumber.open(f) as pdf:
                     t = "\n".join([pg.extract_text() for pg in pdf.pages if pg.extract_text()])
                 out = run_optimization(t, j)
-                if out:
-                    # Parse the two sections
-                    st.session_state['dr'] = re.search(r'<resume>(.*?)</resume>', out, re.S).group(1).strip() if '<resume>' in out else out.strip()
-                    st.session_state['sg'] = re.search(r'<suggestions>(.*?)</suggestions>', out, re.S).group(1).strip() if '<suggestions>' in out else "Check the draft for improvements."
-                else: st.error("AI Error. Please try again.")
+                
+                if out and "ERROR:" not in out:
+                    # Robust parsing with Fallbacks
+                    res_match = re.search(r'<resume>(.*?)</resume>', out, re.S)
+                    sug_match = re.search(r'<suggestions>(.*?)</suggestions>', out, re.S)
+                    
+                    if res_match:
+                        st.session_state['dr'] = res_match.group(1).strip()
+                        st.session_state['sg'] = sug_match.group(1).strip() if sug_match else "No suggestions found."
+                    else:
+                        # If AI forgot tags, use raw text
+                        st.session_state['dr'] = out.strip()
+                        st.session_state['sg'] = "Note: AI formatted response as raw text."
+                else:
+                    st.error(f"AI Failed: {out}")
 
 # --- 4. DASHBOARD ---
 if 'dr' in st.session_state:
@@ -71,26 +94,13 @@ if 'dr' in st.session_state:
 
     with c1:
         st.subheader("✍️ Rewritten Resume")
-        st.info("💡 You can edit this text directly before downloading.")
-        # Main Editor
-        st.session_state['dr'] = st.text_area("Resume Editor", value=st.session_state['dr'], height=700, label_visibility="collapsed")
-        
-        st.divider()
-        st.download_button(
-            label="📥 Download Optimized Word Doc", 
-            data=make_doc(st.session_state['dr']), 
-            file_name="Optimized_Resume.docx", 
-            use_container_width=True
-        )
+        st.session_state['dr'] = st.text_area("Resume Editor", value=st.session_state['dr'], height=600, label_visibility="collapsed")
+        st.download_button("📥 Download Word Doc", data=make_doc(st.session_state['dr']), file_name="Optimized_Resume.docx", use_container_width=True)
 
     with c2:
         st.subheader("💡 Strategic Suggestions")
-        st.write("Use these to strengthen the resume further:")
-        # Display suggestions as a clean list
         st.markdown(st.session_state['sg'])
-        
         st.divider()
-        st.caption("⚠️ AI Disclaimer: This rewrite is a draft. Please verify all facts and dates before applying.")
-
+        st.caption("⚠️ Disclaimer: Factual accuracy is your responsibility.")
 else:
-    st.info("👋 To begin, upload your resume and the Job Description in the sidebar.")
+    st.info("👋 Upload your resume and the Job Description in the sidebar to begin.")
