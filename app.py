@@ -5,14 +5,18 @@ import re
 from docx import Document
 from io import BytesIO
 
-# --- 1. SETUP & BRANDING ---
+# --- 1. SETUP ---
 st.set_page_config(page_title="Resume Signal Auditor", layout="wide")
 
 st.markdown("""
     <style>
-    .main { background-color: #f8f9fa; }
-    .stTextArea textarea { font-family: 'Courier New', Courier, monospace; font-size: 14px; line-height: 1.6; }
-    .rewrite-highlight { color: #007bff; font-weight: bold; }
+    .main { background-color: #ffffff; }
+    .stTextArea textarea { 
+        font-family: 'Arial', sans-serif; 
+        font-size: 14px; 
+        line-height: 1.5; 
+        border: 1px solid #d1d1d1;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -21,32 +25,25 @@ if "GOOGLE_API_KEY" in st.secrets:
 else:
     st.error("Missing API Key in Secrets.")
 
-# --- 2. THE AI BRAIN (More Robust Formatting) ---
+# --- 2. THE AI BRAIN (Focused on Clean Output) ---
 def run_ai_audit(resume_text, jd_text):
-    # Use the specific model names that worked for your key previously
-    models_to_try = ['models/gemini-2.0-flash', 'models/gemini-1.5-flash', 'models/gemini-flash-latest']
+    models_to_try = ['models/gemini-2.0-flash', 'models/gemini-1.5-flash']
     
     prompt = f"""
-    You are an elite Staff-level Career Coach.
+    You are an elite Career Coach.
     
     TASK:
-    1. Identify 8 KEYWORDS from the JD.
-    2. Write a 3-sentence CHANGELOG explaining your strategic pivots for this role.
-    3. Rewrite the resume DRAFT.
-       - Wrap your edits in {{REWRITE: phrase}}.
-       - Insert [ACTION: instruction] for missing metrics.
+    1. Summarize 3-4 specific vocabulary/tone changes you made in the CHANGELOG.
+    2. Rewrite the resume DRAFT to mirror the JD's language while maintaining a 'Humble but Confident' tone.
+    3. Use ONLY [INSERT: specific data needed] where a metric or fact is missing. Do not use any other brackets or symbols.
+    4. RETAIN the original resume's structure and formatting exactly. Do not add bolding (**) unless it was in the original text.
 
-    FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
-    ---
+    FORMAT YOUR RESPONSE:
     CHANGELOG:
-    (Your 3 sentences)
-    ---
-    KEYWORDS:
-    (Your 8 keywords)
-    ---
+    (Brief summary of tone/keyword pivots)
+    
     DRAFT:
-    (The full resume)
-    ---
+    (The full, clean resume rewrite)
 
     RESUME: {resume_text}
     JD: {jd_text}
@@ -58,20 +55,19 @@ def run_ai_audit(resume_text, jd_text):
             response = model.generate_content(prompt)
             if response.text:
                 return response.text
-        except Exception as e:
-            last_error = str(e)
+        except:
             continue
-    return f"ERROR: {last_error}"
+    return None
 
 # --- 3. HELPER TOOLS ---
 def create_docx(text):
     doc = Document()
-    # Clean tags: remove {REWRITE: } and [ACTION: ]
-    clean = re.sub(r'\{(?:REWRITE): (.*?)\}', r'\1', text) 
-    clean = re.sub(r'\[(?:ACTION|METRIC|QUERY):?.*?\]', '', clean, flags=re.IGNORECASE) 
+    # Remove only the [INSERT: ] tags for the final version
+    clean = re.sub(r'\[INSERT:? .*?\]', '', text, flags=re.IGNORECASE) 
     for line in clean.split('\n'):
         if line.strip():
             p = doc.add_paragraph()
+            # Simple bolding for headers (all caps or contains |)
             if "|" in line or line.isupper(): p.add_run(line).bold = True
             else: p.add_run(line)
     bio = BytesIO(); doc.save(bio); bio.seek(0)
@@ -87,59 +83,51 @@ with st.sidebar:
     
     if st.button("Run Strategic Audit", use_container_width=True):
         if uploaded_file and jd_input:
-            with st.spinner("Analyzing..."):
+            with st.spinner("Auditing..."):
                 with pdfplumber.open(uploaded_file) as pdf:
                     resume_text = "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
                 
                 raw_output = run_ai_audit(resume_text, jd_input)
                 
-                # STICKY PARSING LOGIC
-                if "DRAFT:" in raw_output:
-                    try:
-                        # Split by the '---' separators or the labels
-                        st.session_state['changelog'] = raw_output.split("CHANGELOG:")[1].split("KEYWORDS:")[0].replace("---","").strip()
-                        st.session_state['keywords'] = raw_output.split("KEYWORDS:")[1].split("DRAFT:")[0].replace("---","").strip()
-                        st.session_state['draft'] = raw_output.split("DRAFT:")[1].split("---")[0].strip()
-                        st.session_state['actions'] = re.findall(r'\[ACTION:? (.*?)\]', st.session_state['draft'])
-                    except:
-                        st.error("AI followed the wrong format. Please try again.")
-                        st.session_state['raw_debug'] = raw_output # Save for debug
+                if raw_output and "DRAFT:" in raw_output:
+                    st.session_state['changelog'] = raw_output.split("DRAFT:")[0].replace("CHANGELOG:", "").strip()
+                    st.session_state['draft'] = raw_output.split("DRAFT:")[1].strip()
+                    # Store the specific strings the user needs to replace
+                    st.session_state['todo_items'] = re.findall(r'\[INSERT:? (.*?)\]', st.session_state['draft'])
                 else:
-                    st.error("AI encountered an error or blocked the content.")
-                    st.session_state['raw_debug'] = raw_output
+                    st.error("Processing error. Please click 'Run Strategic Audit' again.")
 
 # --- 5. THE DASHBOARD ---
 if 'draft' in st.session_state:
-    with st.expander("🛠️ AI Changelog (Strategy)", expanded=True):
-        st.info(st.session_state['changelog'])
-        st.write(f"**Keywords:** {st.session_state['keywords']}")
+    
+    # Changelog tells them WHAT was rewritten
+    with st.expander("🛠️ Strategy: What was rewritten", expanded=True):
+        st.write(st.session_state['changelog'])
 
-    col_ed, col_check = st.columns([1.8, 1], gap="large")
+    col_ed, col_check = st.columns([2, 1], gap="large")
 
     with col_ed:
-        st.subheader("✍️ Editor")
-        # Visual Preview
-        preview = st.session_state['draft'].replace("{REWRITE:", "📘 **").replace("}", "**").replace("[ACTION:", "🔴 **[ACTION:**").replace("]", "**]")
-        st.markdown(preview)
-        st.divider()
-        st.session_state['draft'] = st.text_area("Edit Text Area", value=st.session_state['draft'], height=500)
+        st.subheader("✍️ Draft & Editor")
+        st.caption("Instructions: Address the [INSERT] tags below with your specific metrics.")
+        # Only the editor is shown here, no "Preview" pane
+        st.session_state['draft'] = st.text_area("Resume Content", value=st.session_state['draft'], height=650, label_visibility="collapsed")
 
     with col_check:
-        st.subheader("📋 Actions")
-        current_tags = re.findall(r'\[ACTION:? (.*?)\]', st.session_state['draft'])
-        resolved = 0
-        if st.session_state['actions']:
-            for item in st.session_state['actions']:
-                if item in current_tags: st.error(f"👉 {item}")
+        st.subheader("📋 Action Items")
+        st.write("Fill in these missing metrics to unlock your download.")
+        
+        # Check current text area for remaining [INSERT] tags
+        current_tags_in_text = re.findall(r'\[INSERT:? (.*?)\]', st.session_state['draft'])
+        
+        resolved_count = 0
+        if 'todo_items' in st.session_state and st.session_state['todo_items']:
+            for item in st.session_state['todo_items']:
+                if item in current_tags_in_text:
+                    st.error(f"👉 {item}")
                 else:
-                    st.success("✅ Resolved")
-                    resolved += 1
-            if resolved == len(st.session_state['actions']):
-                st.download_button("📥 Download .docx", data=create_docx(st.session_state['draft']), file_name="Optimized_Resume.docx", use_container_width=True)
-        else:
-            st.info("No specific actions. Review draft.")
-
-# DEBUG SECTION
-if 'raw_debug' in st.session_state:
-    with st.expander("Show Debugging Info"):
-        st.code(st.session_state['raw_debug'])
+                    st.success(f"✅ Resolved")
+                    resolved_count += 1
+            
+            # Show progress
+            total = len(st.session_state['todo_items'])
+            if r
