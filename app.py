@@ -11,33 +11,24 @@ else:
 
 # --- 2. AI & HELPERS ---
 def run_audit(res_txt, jd_txt):
-    # This prompt is designed to be impossible for the AI to ignore
+    # Using XML tags for 100% reliable parsing
     prompt = f"""
     SYSTEM: You are an elite Career Coach. 
     INSTRUCTIONS:
-    1. Rewrite the resume DRAFT to mirror the JD language.
-    2. Tone: Humble but Confident.
-    3. Use [INSERT: data] for missing metrics.
-    4. Provide a 3-sentence CHANGELOG of your edits.
+    1. Summarize 3 tone pivots inside <strategy> tags.
+    2. Rewrite the resume inside <resume> tags. 
+    3. Mirror the JD language. Tone: Humble but Confident.
+    4. Use [INSERT: data] for missing metrics. No extra bolding (**).
 
-    OUTPUT FORMAT (MUST FOLLOW):
-    CHANGELOG:
-    (Your summary here)
-    
-    DRAFT:
-    (The full rewritten resume here)
-
-    RESUME TO EDIT: {res_txt}
-    TARGET JD: {jd_txt}
+    RESUME: {res_txt}
+    JD: {jd_txt}
     """
     for m in ['gemini-2.0-flash', 'gemini-1.5-flash']:
         try:
             model = genai.GenerativeModel(m)
             res = model.generate_content(prompt)
-            if res.text and "DRAFT:" in res.text:
-                return res.text
-        except:
-            continue
+            if res.text: return res.text
+        except: continue
     return None
 
 def make_doc(txt):
@@ -65,14 +56,22 @@ with st.sidebar:
                 with pdfplumber.open(f) as pdf:
                     t = "\n".join([pg.extract_text() for pg in pdf.pages if pg.extract_text()])
                 out = run_audit(t, j)
-                if out and "DRAFT:" in out:
-                    # Robust splitting
-                    parts = out.split("DRAFT:")
-                    st.session_state['ch'] = parts[0].replace("CHANGELOG:","").strip()
-                    st.session_state['dr'] = parts[1].strip()
+                if out:
+                    # Attempt to extract text between XML tags
+                    strat = re.search(r'<strategy>(.*?)</strategy>', out, re.DOTALL)
+                    resm = re.search(r'<resume>(.*?)</resume>', out, re.DOTALL)
+                    
+                    if strat and resm:
+                        st.session_state['ch'] = strat.group(1).strip()
+                        st.session_state['dr'] = resm.group(1).strip()
+                    else:
+                        # FALLBACK: If tags aren't found, just use the raw text
+                        st.session_state['ch'] = "Strategy identified by AI (Tags missing)"
+                        st.session_state['dr'] = out.strip()
+                    
                     st.session_state['to'] = re.findall(r'\[INSERT:? (.*?)\]', st.session_state['dr'])
                 else:
-                    st.error("AI Error: The AI failed to format the response correctly. Please try clicking 'Run Audit' again.")
+                    st.error("AI Error: Connection failed. Please try again.")
 
 # --- 4. DASHBOARD ---
 if 'dr' in st.session_state:
@@ -80,7 +79,7 @@ if 'dr' in st.session_state:
     c1, c2 = st.columns([2, 1])
     with c1:
         st.subheader("✍️ Editor")
-        st.session_state['dr'] = st.text_area("e", value=st.session_state['dr'], height=500, label_visibility="collapsed")
+        st.session_state['dr'] = st.text_area("e", value=st.session_state['dr'], height=600, label_visibility="collapsed")
     with c2:
         st.subheader("📋 Action Items")
         cur = re.findall(r'\[INSERT:? (.*?)\]', st.session_state['dr'])
@@ -90,10 +89,10 @@ if 'dr' in st.session_state:
                 if i in cur: st.error(f"👉 {i}")
                 else: st.success("✅ Resolved"); dn += 1
             if dn == len(st.session_state['to']):
-                st.download_button("📥 Download", data=make_doc(st.session_state['dr']), file_name="Optimized_Resume.docx", use_container_width=True)
+                st.download_button("📥 Download", data=make_doc(st.session_state['dr']), file_name="Optimized.docx", use_container_width=True)
             else: st.button(f"Locked ({dn}/{len(st.session_state['to'])})", disabled=True, use_container_width=True)
         else:
             st.success("No missing metrics detected!")
-            st.download_button("📥 Download", data=make_doc(st.session_state['dr']), file_name="Optimized_Resume.docx", use_container_width=True)
+            st.download_button("📥 Download", data=make_doc(st.session_state['dr']), file_name="Optimized.docx", use_container_width=True)
 else:
     st.info("👋 Upload data in sidebar to begin.")
