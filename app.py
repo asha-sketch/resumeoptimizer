@@ -11,49 +11,23 @@ else:
 
 # --- 2. AI & HELPERS ---
 def run_audit(res_txt, jd_txt):
-    # These are the exact confirmed names from your previous diagnostic list
-    models_to_try = [
-        'models/gemini-2.0-flash', 
-        'models/gemini-1.5-flash', 
-        'models/gemini-flash-latest'
-    ]
-    
-    # Updated Safety Settings for the newest models
-    safety_settings = [
+    # exact names from your diagnostic
+    models = ['models/gemini-2.0-flash', 'models/gemini-1.5-flash', 'models/gemini-flash-latest']
+    safe = [
         {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
         {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
         {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
     ]
-
-    prompt = f"""
-    SYSTEM: You are an elite Career Coach. 
-    INSTRUCTIONS:
-    1. Summarize 3 tone pivots inside <strategy> tags.
-    2. Rewrite the resume inside <resume> tags. 
-    3. Mirror the JD language. Tone: Humble but Confident.
-    4. Use [INSERT: data] for missing metrics. No extra bolding (**).
-
-    RESUME: {res_txt}
-    JD: {jd_text}
-    """
-
-    last_error = ""
-    for m in models_to_try:
+    p = f"Coach. 1) Summarize 3 tone pivots in <strategy>. 2) Rewrite DRAFT in <resume>. 3) Tone: Humble/Confident. 4) Use [INSERT: data] for missing metrics. 5) No extra bolding. Resume: {res_txt} JD: {jd_txt}"
+    
+    for m in models:
         try:
             model = genai.GenerativeModel(m)
-            # Use generation_config to ensure we get a text response
-            res = model.generate_content(
-                prompt, 
-                safety_settings=safety_settings
-            )
-            if res.text: 
-                return res.text
-        except Exception as e:
-            last_error = str(e)
-            continue
-    
-    return f"DEBUG_ERROR: {last_error}"
+            res = model.generate_content(p, safety_settings=safe)
+            if res.text: return res.text
+        except: continue
+    return None
 
 def make_doc(txt):
     d = docx.Document()
@@ -68,6 +42,7 @@ def make_doc(txt):
 
 # --- 3. UI ---
 st.title("🎯 Resume Signal Auditor")
+st.warning("⚠️ AI Disclaimer: Human judgment is required to verify all facts.")
 
 with st.sidebar:
     st.header("1. Input")
@@ -75,26 +50,15 @@ with st.sidebar:
     j = st.text_area("Job Description", height=200)
     if st.button("Run Audit", use_container_width=True):
         if f and j:
-            with st.spinner("Processing with Gemini..."):
+            with st.spinner("Processing..."):
                 with pdfplumber.open(f) as pdf:
                     t = "\n".join([pg.extract_text() for pg in pdf.pages if pg.extract_text()])
                 out = run_audit(t, j)
-                
-                if out and "DEBUG_ERROR:" in out:
-                    st.error(f"Google AI Error: {out.replace('DEBUG_ERROR: ', '')}")
-                elif out:
-                    # Parse XML tags
-                    strat = re.search(r'<strategy>(.*?)</strategy>', out, re.DOTALL)
-                    resm = re.search(r'<resume>(.*?)</resume>', out, re.DOTALL)
-                    if strat and resm:
-                        st.session_state['ch'] = strat.group(1).strip()
-                        st.session_state['dr'] = resm.group(1).strip()
-                    else:
-                        st.session_state['ch'] = "Strategy identified by AI"
-                        st.session_state['dr'] = out.strip()
+                if out:
+                    st.session_state['ch'] = re.search(r'<strategy>(.*?)</strategy>', out, re.S).group(1).strip() if '<strategy>' in out else "Strategy identified"
+                    st.session_state['dr'] = re.search(r'<resume>(.*?)</resume>', out, re.S).group(1).strip() if '<resume>' in out else out.strip()
                     st.session_state['to'] = re.findall(r'\[INSERT:? (.*?)\]', st.session_state['dr'])
-                else:
-                    st.error("AI Error: Empty response. Please try again.")
+                else: st.error("AI Error. Please try again.")
 
 # --- 4. DASHBOARD ---
 if 'dr' in st.session_state:
@@ -107,4 +71,15 @@ if 'dr' in st.session_state:
         st.subheader("📋 Action Items")
         cur = re.findall(r'\[INSERT:? (.*?)\]', st.session_state['dr'])
         dn = 0
-        if st.session_state.ge
+        if st.session_state.get('to'):
+            for i in st.session_state['to']:
+                if i in cur: st.error(f"👉 {i}")
+                else: st.success("✅ Resolved"); dn += 1
+            if dn == len(st.session_state['to']):
+                st.download_button("📥 Download", data=make_doc(st.session_state['dr']), file_name="Optimized.docx", use_container_width=True)
+            else: st.button(f"Locked ({dn}/{len(st.session_state['to'])})", disabled=True, use_container_width=True)
+        else:
+            st.success("Draft ready!")
+            st.download_button("📥 Download", data=make_doc(st.session_state['dr']), file_name="Optimized.docx", use_container_width=True)
+else:
+    st.info("👋 Upload data in sidebar to begin.")
