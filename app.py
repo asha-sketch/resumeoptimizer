@@ -11,12 +11,33 @@ else:
 
 # --- 2. AI & HELPERS ---
 def run_audit(res_txt, jd_txt):
-    p = f"Coach. 1) Summarize 3 tone pivots in CHANGELOG. 2) Rewrite DRAFT to mirror JD. 3) Tone: Humble/Confident. 4) Use ONLY [INSERT: data] for missing metrics. 5) No extra bolding. Resume: {res_txt} JD: {jd_txt}"
+    # This prompt is designed to be impossible for the AI to ignore
+    prompt = f"""
+    SYSTEM: You are an elite Career Coach. 
+    INSTRUCTIONS:
+    1. Rewrite the resume DRAFT to mirror the JD language.
+    2. Tone: Humble but Confident.
+    3. Use [INSERT: data] for missing metrics.
+    4. Provide a 3-sentence CHANGELOG of your edits.
+
+    OUTPUT FORMAT (MUST FOLLOW):
+    CHANGELOG:
+    (Your summary here)
+    
+    DRAFT:
+    (The full rewritten resume here)
+
+    RESUME TO EDIT: {res_txt}
+    TARGET JD: {jd_txt}
+    """
     for m in ['gemini-2.0-flash', 'gemini-1.5-flash']:
         try:
-            res = genai.GenerativeModel(m).generate_content(f"CHANGELOG:\n\nDRAFT:\n\n{p}")
-            if res.text: return res.text
-        except: continue
+            model = genai.GenerativeModel(m)
+            res = model.generate_content(prompt)
+            if res.text and "DRAFT:" in res.text:
+                return res.text
+        except:
+            continue
     return None
 
 def make_doc(txt):
@@ -45,10 +66,13 @@ with st.sidebar:
                     t = "\n".join([pg.extract_text() for pg in pdf.pages if pg.extract_text()])
                 out = run_audit(t, j)
                 if out and "DRAFT:" in out:
-                    st.session_state['ch'] = out.split("DRAFT:")[0].replace("CHANGELOG:","").strip()
-                    st.session_state['dr'] = out.split("DRAFT:")[1].strip()
+                    # Robust splitting
+                    parts = out.split("DRAFT:")
+                    st.session_state['ch'] = parts[0].replace("CHANGELOG:","").strip()
+                    st.session_state['dr'] = parts[1].strip()
                     st.session_state['to'] = re.findall(r'\[INSERT:? (.*?)\]', st.session_state['dr'])
-                else: st.error("AI Error. Try again.")
+                else:
+                    st.error("AI Error: The AI failed to format the response correctly. Please try clicking 'Run Audit' again.")
 
 # --- 4. DASHBOARD ---
 if 'dr' in st.session_state:
@@ -66,7 +90,10 @@ if 'dr' in st.session_state:
                 if i in cur: st.error(f"👉 {i}")
                 else: st.success("✅ Resolved"); dn += 1
             if dn == len(st.session_state['to']):
-                st.download_button("📥 Download", data=make_doc(st.session_state['dr']), file_name="Resume.docx")
-            else: st.button(f"Locked ({dn}/{len(st.session_state['to'])})", disabled=True)
-        else: st.download_button("📥 Download", data=make_doc(st.session_state['dr']), file_name="Resume.docx")
-else: st.info("👋 Upload data to begin.")
+                st.download_button("📥 Download", data=make_doc(st.session_state['dr']), file_name="Optimized_Resume.docx", use_container_width=True)
+            else: st.button(f"Locked ({dn}/{len(st.session_state['to'])})", disabled=True, use_container_width=True)
+        else:
+            st.success("No missing metrics detected!")
+            st.download_button("📥 Download", data=make_doc(st.session_state['dr']), file_name="Optimized_Resume.docx", use_container_width=True)
+else:
+    st.info("👋 Upload data in sidebar to begin.")
