@@ -14,7 +14,6 @@ st.markdown("""
     .main { background-color: #f8f9fa; }
     .stTextArea textarea { font-family: 'Courier New', Courier, monospace; font-size: 14px; line-height: 1.6; }
     .action-box { background-color: #ffffff; padding: 20px; border-radius: 10px; border-left: 5px solid #ff4b4b; }
-    .stAlert { border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -24,40 +23,28 @@ if "GOOGLE_API_KEY" in st.secrets:
 else:
     st.error("Missing API Key. Please add 'GOOGLE_API_KEY' to your Streamlit Secrets.")
 
-# --- 2. AI AUDIT LOGIC (With Model Fallbacks) ---
+# --- 2. AI AUDIT LOGIC (Robust Formatting) ---
 def run_ai_audit(resume_text, jd_text):
-    # These are the models from your diagnostic list, prioritizing 2.5 series
-    models_to_try = [
-        'gemini-2.5-flash', 
-        'gemini-2.5-pro', 
-        'gemini-1.5-flash', 
-        'gemini-flash-latest'
-    ]
+    # Trying the most stable models from your diagnostic list
+    models_to_try = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-flash-latest']
     
     prompt = f"""
-    You are a Hiring Manager at a top-tier company. Perform a 3-part strategic audit of this resume based on the Job Description (JD).
+    You are a Hiring Manager. Perform a strategic audit of this resume based on the JD.
 
     PART 1: KEYWORD GAP ANALYSIS
-    - Identify 8 essential keywords/skills from the JD. 
-    - For each, state if it is [FOUND] or [MISSING] in the resume. 
-    - For [MISSING] keywords, provide a specific 'Suggestion' on how to incorporate it into a bullet point.
+    - Identify 8 essential keywords from the JD. State if [FOUND] or [MISSING].
 
-    PART 2: METRIC HUNTER
-    - Scan the resume for bullet points that lack quantifiable impact (numbers, %, $, or scale). 
-    - Flag these in the draft using [METRIC_NEEDED: 'Context of why a number is needed here'].
-
-    PART 3: LINGUISTIC MIRRORING (THE DRAFT)
-    - Rewrite the resume using the 'language' and 'vocabulary' of the JD to resonate with the hiring team.
-    - Maintain a 'Humble but Confident' tone: Use ownership verbs but avoid arrogance.
-    - If the JD uses specific terminology (e.g., 'Stakeholders' vs 'Clients'), use the JD's version.
-    - HALLUCINATION GUARDRAIL: Do NOT invent or change company names, job titles, or dates.
-
+    PART 2: METRIC HUNTER & LINGUISTIC MIRRORING
+    - Rewrite the resume to mirror the JD's language and 'Humble but Confident' tone.
+    - CRITICAL: For ANY bullet point that lacks a number, %, or $ amount, you MUST insert the tag [METRIC_NEEDED: 'reason'].
+    - CRITICAL: If a major keyword is missing from a section, insert [KEYWORD_MISSING: 'keyword'].
+    
     RESUME: {resume_text}
     JD: {jd_text}
 
     OUTPUT FORMAT:
-    KEYWORDS_ANALYSIS: [List keywords with status and suggestions]
-    DRAFT: [The mirrored rewrite with [METRIC_NEEDED] and [KEYWORD_MISSING: 'Phrase'] tags inserted]
+    KEYWORDS_ANALYSIS: [List here]
+    DRAFT: [The full rewrite with the [METRIC_NEEDED: ...] and [KEYWORD_MISSING: ...] tags included]
     """
     
     for model_name in models_to_try:
@@ -67,7 +54,6 @@ def run_ai_audit(resume_text, jd_text):
             return response.text
         except Exception:
             continue
-            
     return None
 
 # --- 3. HELPER FUNCTIONS ---
@@ -76,64 +62,90 @@ def extract_pdf_text(file):
         with pdfplumber.open(file) as pdf:
             return "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
     except Exception as e:
-        st.error(f"PDF Error: {str(e)}")
         return ""
 
 def create_docx(text):
     doc = Document()
-    # Strip all AI tags [ACTION/METRIC/KEYWORD] before final export
-    clean_text = re.sub(r'\[(?:METRIC_NEEDED|KEYWORD_MISSING): .*?\]', '', text) 
+    # Flexible regex to remove all bracketed AI tags for the final doc
+    clean_text = re.sub(r'\[(METRIC_NEEDED|KEYWORD_MISSING|ACTION|QUERY):?.*?\]', '', text, flags=re.IGNORECASE) 
     for line in clean_text.split('\n'):
         if line.strip():
-            # Apply bold to headers (usually lines with pipes or all caps)
+            p = doc.add_paragraph()
+            # Bolding headers
             if "|" in line or line.isupper():
-                p = doc.add_paragraph()
                 p.add_run(line).bold = True
             else:
-                doc.add_paragraph(line)
+                p.add_run(line)
     bio = BytesIO()
     doc.save(bio)
     bio.seek(0)
     return bio
 
-# --- 4. THE UI INTERFACE ---
+# --- 4. THE UI ---
 st.title("🎯 Resume Signal Auditor")
-st.warning("⚠️ **Disclaimer:** This tool uses AI to bolster your narrative. Factual accuracy remains your responsibility. Falsifying data on a resume is never recommended.")
+st.warning("⚠️ **AI Disclaimer:** This tool assists your narrative. Please verify all metrics and facts before applying.")
 
 with st.sidebar:
     st.header("1. Input Data")
-    uploaded_file = st.file_uploader("Upload Current Resume (PDF)", type="pdf")
-    jd_input = st.text_area("Target Job Description", height=300, placeholder="Paste the JD here...")
+    uploaded_file = st.file_uploader("Upload Resume (PDF)", type="pdf")
+    jd_input = st.text_area("Target Job Description", height=300)
     
     if st.button("Run Strategic Audit", use_container_width=True):
         if uploaded_file and jd_input:
-            with st.spinner("Analyzing signals and mirroring language..."):
+            with st.spinner("Analyzing signals..."):
                 resume_text = extract_pdf_text(uploaded_file)
                 output = run_ai_audit(resume_text, jd_input)
                 
                 if output and "DRAFT:" in output:
                     st.session_state['analysis'] = output.split("DRAFT:")[0].replace("KEYWORDS_ANALYSIS:", "").strip()
                     st.session_state['draft'] = output.split("DRAFT:")[1].strip()
-                    # Identify the "To-Do" items for the checklist
-                    st.session_state['todo_items'] = re.findall(r'\[(?:METRIC_NEEDED|KEYWORD_MISSING): (.*?)\]', st.session_state['draft'])
+                    
+                    # Identifies tags in the generated text
+                    raw_tags = re.findall(r'\[(.*?):?\s*(.*?)\]', st.session_state['draft'])
+                    st.session_state['todo_items'] = [f"[{t[0]}: {t[1]}]" for t in raw_tags if any(word in t[0].upper() for word in ["METRIC", "KEYWORD", "ACTION"])]
                 else:
-                    st.error("The AI failed to generate a draft. Please try again.")
-        else:
-            st.warning("Please provide both a PDF resume and a Job Description.")
+                    st.error("AI Error: Formatting mismatch. Please try again.")
 
 # --- 5. THE AUDIT DASHBOARD ---
 if 'draft' in st.session_state:
-    
     col_editor, col_checklist = st.columns([1.5, 1], gap="large")
 
     with col_editor:
-        st.subheader("✍️ Rewritten Draft (Linguistic Mirroring)")
-        st.caption("Address the red [BRACKETED ITEMS] by typing your real-world data directly into the editor below.")
-        # This is the heart of the tool: The user must engage with the AI's suggestions
+        st.subheader("✍️ Rewritten Draft")
+        st.caption("Instructions: Replace the [BRACKETED ITEMS] with your real-world data.")
         user_edits = st.text_area("Live Editor", value=st.session_state['draft'], height=700, label_visibility="collapsed")
         st.session_state['draft'] = user_edits
 
     with col_checklist:
-        st.subheader("📋 Action Items Box")
+        st.subheader("📋 Action Items")  # CHANGED: Renamed from 'Action Items Box'
         
-        # Keyword Gap Analysis (Hidden in expander to focus on the To-Do list)
+        with st.expander("🔍 Keyword Gap Analysis"):
+            st.write(st.session_state['analysis'])
+
+        st.write("### Required Fixes")
+        
+        # Real-time resolution check
+        resolved_all = True
+        if st.session_state.get('todo_items'):
+            for item_str in st.session_state['todo_items']:
+                if item_str in st.session_state['draft']:
+                    st.error(f"👉 {item_str.replace('[', '').replace(']', '')}")
+                    resolved_all = False
+                else:
+                    st.success(f"✅ Resolved")
+        else:
+            st.info("No specific action items flagged. Review the draft for general improvements.")
+
+        st.divider()
+        
+        # Download Logic
+        if resolved_all and st.session_state.get('todo_items'):
+            st.balloons()
+            st.success("Audit Complete!")
+            st.download_button("📥 Download .docx", data=create_docx(st.session_state['draft']), file_name="Optimized_Resume.docx", use_container_width=True)
+        elif not st.session_state.get('todo_items'):
+             st.download_button("📥 Download .docx (No items flagged)", data=create_docx(st.session_state['draft']), file_name="Optimized_Resume.docx", use_container_width=True)
+        else:
+            st.button("Download Locked", disabled=True, use_container_width=True)
+else:
+    st.info("👋 Upload your Resume and the Job Description in the sidebar to start the strategic audit.")
