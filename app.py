@@ -14,7 +14,7 @@ st.markdown("""
     .stTextArea textarea { font-family: 'Courier New', Courier, monospace; }
     .action-box { background-color: #ffffff; padding: 20px; border-radius: 10px; border-left: 5px solid #ff4b4b; }
     </style>
-    """, unsafe_content_type=True)
+    """, unsafe_allow_type=True)
 
 if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
