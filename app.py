@@ -3,23 +3,18 @@ import google.generativeai as genai
 import pdfplumber, re, docx, io
 
 # --- 1. SETUP ---
-st.set_page_config(page_title="Resume Optimizer", layout="centered")
+st.set_page_config(page_title="Resume Optimizer", layout="wide")
 
 if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 else:
     st.error("Missing GOOGLE_API_KEY in Secrets.")
 
-# --- 2. AI ENGINE (Updated for Gemini 2.5) ---
+# --- 2. AI ENGINE (Transparency Logic) ---
 def run_optimization(res_txt, jd_txt):
-    # Updated list based on your specific API access (2.5 is now your primary)
-    models_to_try = [
-        'models/gemini-2.5-flash', 
-        'models/gemini-1.5-flash', 
-        'models/gemini-flash-latest'
-    ]
+    # Models from your diagnostic list
+    models_to_try = ['models/gemini-2.5-flash', 'models/gemini-1.5-flash', 'models/gemini-flash-latest']
     
-    # Safety Bypass for Personal Information (PII)
     safe = [
         {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
         {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -28,38 +23,42 @@ def run_optimization(res_txt, jd_txt):
     ]
     
     prompt = f"""
-    You are an elite Career Coach. 
-    1. Summarize 3-4 specific tone/vocabulary pivots in a CHANGELOG.
-    2. Rewrite the resume DRAFT to mirror the JD language.
-    3. Tone: Humble but Confident. No extra bolding.
+    You are an elite Career Coach. Perform a strategic rewrite of this resume to align with the JD.
+    
+    INSTRUCTIONS:
+    1. Rewrite the resume DRAFT to mirror the JD's language. Use a 'Humble but Confident' tone.
+    2. Provide a detailed CHANGELOG. For every significant edit, specify:
+       - [Section/Bullet]: What was changed.
+       - [The Pivot]: Summary of the rewrite.
+       - [The Signal]: Why this matters for this specific JD (e.g. "Mirrored 'Flywheel' keyword", "Injected ownership verb").
 
     FORMAT:
-    CHANGELOG: (Summary of edits)
+    CHANGELOG:
+    (Your detailed list of edits and signals)
     ---
-    DRAFT: (The full rewritten resume)
+    DRAFT:
+    (The full rewritten resume)
 
     RESUME: {res_txt}
     JD: {jd_txt}
     """
     
-    err_log = ""
+    last_err = ""
     for m in models_to_try:
         try:
             model = genai.GenerativeModel(m)
             res = model.generate_content(prompt, safety_settings=safe)
-            if res.text:
-                return res.text
+            if res.text: return res.text
         except Exception as e:
-            err_log = str(e)
+            last_err = str(e)
             continue
-    return f"ST_ERROR: {err_log}"
+    return f"ST_ERROR: {last_err}"
 
 def make_doc(txt):
     d = docx.Document()
     for l in txt.split('\n'):
         if l.strip():
             p = d.add_paragraph()
-            # Professional bolding for names and headers
             if "|" in l or l.isupper(): p.add_run(l).bold = True
             else: p.add_run(l)
     b = io.BytesIO(); d.save(b); b.seek(0)
@@ -67,7 +66,7 @@ def make_doc(txt):
 
 # --- 3. UI ---
 st.title("🎯 Resume Optimizer")
-st.caption("Strategic Career Assistant | Beta v1.4.3")
+st.caption("Strategic Career Assistant | Beta v1.4.4")
 
 with st.sidebar:
     st.header("1. Upload Inputs")
@@ -76,7 +75,7 @@ with st.sidebar:
     
     if st.button("Begin Optimizing", use_container_width=True):
         if f and j:
-            with st.spinner("Analyzing signals with Gemini 2.5..."):
+            with st.spinner("Analyzing signals and documenting edits..."):
                 try:
                     with pdfplumber.open(f) as pdf:
                         t = "\n".join([pg.extract_text() for pg in pdf.pages if pg.extract_text()])
@@ -103,21 +102,30 @@ draft = st.session_state.get('dr')
 changelog = st.session_state.get('ch')
 
 if draft:
+    # We display the Changelog as a primary insight box
     st.subheader("🛠️ Strategic Changelog")
+    st.markdown("##### How I transformed your resume:")
+    # We use st.markdown so the AI can use bullets and bolding in the changelog
     st.info(changelog)
 
-    st.subheader("📝 Optimized Preview")
-    st.code(draft, language="text")
-    
     st.divider()
+
+    col_preview, col_download = st.columns([2, 1])
     
-    st.download_button(
-        label="📥 Download Optimized Word Doc", 
-        data=make_doc(draft), 
-        file_name="Optimized_Resume.docx", 
-        use_container_width=True
-    )
+    with col_preview:
+        st.subheader("📝 Optimized Preview")
+        st.code(draft, language="text")
     
-    st.caption("⚠️ AI Disclaimer: Verify all facts and metrics before applying.")
+    with col_download:
+        st.subheader("📥 Export")
+        st.write("Ready to apply? Download the clean version below.")
+        st.download_button(
+            label="Download Optimized Word Doc", 
+            data=make_doc(draft), 
+            file_name="Optimized_Resume.docx", 
+            use_container_width=True
+        )
+        st.divider()
+        st.caption("⚠️ AI Disclaimer: Verify all facts, dates, and metrics before applying.")
 else:
     st.info("👋 To begin, upload your resume and the Job Description in the sidebar.")
